@@ -37,7 +37,6 @@ echo "启动服务..."
 python3 da3_realtime_service.py \
     --host ${HOST} \
     --port ${PORT} \
-    --debug
 
 echo ""
 echo "服务已停止"

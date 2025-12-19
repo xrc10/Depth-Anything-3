@@ -314,10 +314,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="DA3 Realtime Streaming Service")
     parser.add_argument('--host', type=str, default='0.0.0.0', help='Server host')
     parser.add_argument('--port', type=int, default=5000, help='Server port')
-    parser.add_argument('--debug', action='store_true', help='Debug mode')
     
     args = parser.parse_args()
     
     print(f"Starting DA3 Realtime Service on {args.host}:{args.port}")
-    socketio.run(app, host=args.host, port=args.port, debug=args.debug)
+    socketio.run(app, host=args.host, port=args.port, debug=False)
 
