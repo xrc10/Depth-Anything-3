@@ -1,0 +1,51 @@
+Weights:
+  DA3: './weights/model.safetensors'
+  DA3_CONFIG: './weights/config.json'
+  SALAD: './weights/dino_salad.ckpt'
+
+Model:
+  chunk_size: 40  # 减小chunk_size以获得更快的响应
+  overlap: 10     # 减小overlap以提高效率
+  loop_chunk_size: 10
+  loop_enable: True
+  useDBoW: False
+  delete_temp_files: False  # 保留临时文件便于调试
+  align_lib: 'torch'  # 使用torch以获得更好的兼容性
+  align_method: 'scale+se3'
+  scale_compute_method: 'auto'
+  align_type: 'dense'
+
+  ref_view_strategy: 'saddle_balanced'
+  ref_view_strategy_loop: 'saddle_balanced'
+  depth_threshold: 15.0
+
+  save_depth_conf_result: False  # 实时模式不需要保存
+  save_debug_info: False
+
+  Sparse_Align:
+    keypoint_select: 'orb'
+    keypoint_num: 5000
+
+  IRLS:
+    delta: 0.1
+    max_iters: 5
+    tol: 1e-9
+
+  Pointcloud_Save:
+    sample_ratio: 0.05  # 增加采样率以获得更密集的点云（适合小场景）
+    conf_threshold_coef: 0.6
+
+Loop:
+  SALAD:
+    image_size: [336, 336]
+    batch_size: 16  # 减小batch_size以节省内存
+    similarity_threshold: 0.85
+    top_k: 5
+    use_nms: True
+    nms_threshold: 25
+
+  SIM3_Optimizer:
+    lang_version: 'python'  # 使用python版本以获得更好的兼容性
+    max_iterations: 20
+    lambda_init: 1e-6
+

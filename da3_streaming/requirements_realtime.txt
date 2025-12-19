@@ -1,0 +1,12 @@
+# DA3 实时streaming服务依赖
+flask==2.3.2
+flask-cors==4.0.0
+flask-socketio==5.3.4
+python-socketio==5.9.0
+eventlet==0.33.3
+pyzmq==25.1.1
+opencv-python==4.8.0.74
+torch>=2.0.0
+safetensors>=0.3.1
+matplotlib>=3.7.0
+

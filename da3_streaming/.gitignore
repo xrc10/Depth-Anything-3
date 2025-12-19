@@ -1,0 +1,62 @@
+# 视频文件
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# 大文件类型
+*.npy
+*.npz
+*.ply
+*.pcd
+*.bin
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.tflite
+*.pb
+*.model
+*.weights
+
+# 目录
+./extraced_images/
+./extract_images/
+./exps/
+./weights/
+./results_output/
+./pcd/
+./*weights*/
+
+# 特定文件
+./camera_poses.txt
+./intrinsic.txt
+./output.ply
+./loop_closures.txt
+./loop_closures.txt.gz
+./loop_closures.txt.gz.part
+./loop_closures.txt.gz.part.1
+
+# 符号链接
+*.lnk
+*.symlink
+*.sym
+*.symlnk
+*.sl
+*.slk
+*.slnk
+*.symlinked
+*.softlink
+*.softlnk
+*.softlnk*
+*.soft_link*
+*.softlink*
+*.symlink*
+*.symlink.*
+*.softlink.*
+*.soft_link

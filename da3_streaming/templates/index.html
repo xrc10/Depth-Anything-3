@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DA3 实时点云重建演示</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            min-width: 300px;
+            z-index: 1000;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 15px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        #start-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #start-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        #stop-btn {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        #stop-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #status {
+            margin-top: 15px;
+            padding: 12px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .status-label {
+            color: #666;
+            font-weight: 600;
+        }
+
+        .status-value {
+            color: #333;
+            font-weight: 700;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .status-idle { background-color: #9e9e9e; }
+        .status-capturing { background-color: #4caf50; }
+        .status-processing { background-color: #ff9800; }
+        .status-loop_closure { background-color: #2196f3; }
+        .status-finished { background-color: #9c27b0; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 12px;
+            color: #666;
+            max-width: 300px;
+            z-index: 1000;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px 50px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            display: none;
+            z-index: 2000;
+            text-align: center;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 3000;
+            transform: translateX(400px);
+            transition: transform 0.3s;
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast.success {
+            border-left: 4px solid #4caf50;
+        }
+
+        .toast.error {
+            border-left: 4px solid #f44336;
+        }
+
+        .toast.info {
+            border-left: 4px solid #2196f3;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container"></div>
+        
+        <div id="controls">
+            <h1>🎥 DA3 实时重建</h1>
+            
+            <div class="control-group">
+                <label>ZMQ 主机:</label>
+                <input type="text" id="zmq-host" value="127.0.0.1">
+            </div>
+            
+            <div class="control-group">
+                <label>ZMQ 端口:</label>
+                <input type="number" id="zmq-port" value="5555">
+            </div>
+            
+            <button id="start-btn">开始扫描</button>
+            <button id="stop-btn" disabled>停止并回环优化</button>
+            
+            <div id="status">
+                <div class="status-item">
+                    <span class="status-label">状态:</span>
+                    <span class="status-value">
+                        <span class="status-indicator status-idle"></span>
+                        <span id="status-text">空闲</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">已捕获帧数:</span>
+                    <span class="status-value" id="frame-count">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">已处理块:</span>
+                    <span class="status-value" id="chunk-count">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">点云数量:</span>
+                    <span class="status-value" id="point-count">0</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="info">
+            💡 <strong>操作提示:</strong><br>
+            • 鼠标左键拖动: 旋转视角<br>
+            • 鼠标右键拖动: 平移视角<br>
+            • 鼠标滚轮: 缩放视图<br>
+            • 点云将实时增量渲染<br>
+            • 回环优化后将显示最终结果
+        </div>
+        
+        <div id="loading">
+            <div class="spinner"></div>
+            <div id="loading-text">处理中...</div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    
+    <script>
+        // Three.js 场景设置
+        let scene, camera, renderer, controls;
+        let pointClouds = [];
+        let socket;
+        
+        function initThreeJS() {
+            const container = document.getElementById('canvas-container');
+            
+            // 场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e);
+            
+            // 相机
+            camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
+            );
+            camera.position.set(5, 5, 5);
+            camera.lookAt(0, 0, 0);
+            
+            // 渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+            
+            // 控制器
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            // 光照
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 10, 10);
+            scene.add(directionalLight);
+            
+            // 网格地面
+            const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+            scene.add(gridHelper);
+            
+            // 坐标轴
+            const axesHelper = new THREE.AxesHelper(5);
+            scene.add(axesHelper);
+            
+            // 窗口大小调整
+            window.addEventListener('resize', onWindowResize, false);
+            
+            // 动画循环
+            animate();
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // 加载并显示点云
+        async function loadPointCloud(chunkId) {
+            showLoading(`加载点云块 ${chunkId}...`);
+            
+            try {
+                const response = await fetch(`/pointcloud/${chunkId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to load pointcloud');
+                }
+                
+                const plyData = await response.arrayBuffer();
+                const pointCloud = parsePLY(plyData);
+                
+                // 创建点云对象
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(pointCloud.positions, 3));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(pointCloud.colors, 3));
+                
+                const material = new THREE.PointsMaterial({
+                    size: 0.02,
+                    vertexColors: true,
+                    sizeAttenuation: true
+                });
+                
+                const points = new THREE.Points(geometry, material);
+                points.userData.chunkId = chunkId;
+                
+                scene.add(points);
+                pointClouds.push(points);
+                
+                updatePointCount();
+                hideLoading();
+                showToast(`已加载点云块 ${chunkId}`, 'success');
+                
+            } catch (error) {
+                console.error('Error loading pointcloud:', error);
+                hideLoading();
+                showToast('加载点云失败', 'error');
+            }
+        }
+        
+        // 加载最终点云（回环后）
+        async function loadFinalPointCloud() {
+            showLoading('加载最终优化点云...');
+            
+            try {
+                // 移除所有现有点云
+                pointClouds.forEach(pc => scene.remove(pc));
+                pointClouds = [];
+                
+                const response = await fetch('/pointcloud/final');
+                if (!response.ok) {
+                    throw new Error('Failed to load final pointcloud');
+                }
+                
+                const plyData = await response.arrayBuffer();
+                const pointCloud = parsePLY(plyData);
+                
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(pointCloud.positions, 3));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(pointCloud.colors, 3));
+                
+                const material = new THREE.PointsMaterial({
+                    size: 0.02,
+                    vertexColors: true,
+                    sizeAttenuation: true
+                });
+                
+                const points = new THREE.Points(geometry, material);
+                points.userData.isFinal = true;
+                
+                scene.add(points);
+                pointClouds.push(points);
+                
+                updatePointCount();
+                hideLoading();
+                showToast('最终优化点云加载完成！', 'success');
+                
+            } catch (error) {
+                console.error('Error loading final pointcloud:', error);
+                hideLoading();
+                showToast('加载最终点云失败', 'error');
+            }
+        }
+        
+        // 简单的PLY解析器
+        function parsePLY(arrayBuffer) {
+            const decoder = new TextDecoder('ascii');
+            const text = decoder.decode(arrayBuffer);
+            
+            // 解析头部
+            const headerEndIndex = text.indexOf('end_header');
+            const headerText = text.substring(0, headerEndIndex);
+            
+            const vertexCountMatch = headerText.match(/element vertex (\d+)/);
+            const vertexCount = parseInt(vertexCountMatch[1]);
+            
+            // 检查格式
+            const isAscii = headerText.includes('format ascii');
+            
+            if (isAscii) {
+                return parsePLYAscii(text, headerEndIndex, vertexCount);
+            } else {
+                return parsePLYBinary(arrayBuffer, headerEndIndex + 11, vertexCount);
+            }
+        }
+        
+        function parsePLYAscii(text, headerEndIndex, vertexCount) {
+            const dataText = text.substring(headerEndIndex + 11);
+            const lines = dataText.trim().split('\n');
+            
+            const positions = new Float32Array(vertexCount * 3);
+            const colors = new Float32Array(vertexCount * 3);
+            
+            for (let i = 0; i < vertexCount && i < lines.length; i++) {
+                const parts = lines[i].trim().split(/\s+/);
+                
+                positions[i * 3] = parseFloat(parts[0]);
+                positions[i * 3 + 1] = parseFloat(parts[1]);
+                positions[i * 3 + 2] = parseFloat(parts[2]);
+                
+                colors[i * 3] = parseInt(parts[3]) / 255;
+                colors[i * 3 + 1] = parseInt(parts[4]) / 255;
+                colors[i * 3 + 2] = parseInt(parts[5]) / 255;
+            }
+            
+            return { positions, colors };
+        }
+        
+        function parsePLYBinary(arrayBuffer, dataOffset, vertexCount) {
+            const dataView = new DataView(arrayBuffer, dataOffset);
+            
+            const positions = new Float32Array(vertexCount * 3);
+            const colors = new Float32Array(vertexCount * 3);
+            
+            let offset = 0;
+            for (let i = 0; i < vertexCount; i++) {
+                positions[i * 3] = dataView.getFloat32(offset, true);
+                positions[i * 3 + 1] = dataView.getFloat32(offset + 4, true);
+                positions[i * 3 + 2] = dataView.getFloat32(offset + 8, true);
+                
+                colors[i * 3] = dataView.getUint8(offset + 12) / 255;
+                colors[i * 3 + 1] = dataView.getUint8(offset + 13) / 255;
+                colors[i * 3 + 2] = dataView.getUint8(offset + 14) / 255;
+                
+                offset += 15;
+            }
+            
+            return { positions, colors };
+        }
+        
+        function updatePointCount() {
+            let totalPoints = 0;
+            pointClouds.forEach(pc => {
+                totalPoints += pc.geometry.attributes.position.count;
+            });
+            document.getElementById('point-count').textContent = totalPoints.toLocaleString();
+        }
+        
+        // UI 控制
+        function showLoading(text) {
+            document.getElementById('loading-text').textContent = text;
+            document.getElementById('loading').style.display = 'block';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => toast.classList.add('show'), 100);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+        
+        function updateStatus(data) {
+            const statusText = document.getElementById('status-text');
+            const indicator = document.querySelector('.status-indicator');
+            
+            // 更新状态文本
+            const statusMap = {
+                'idle': '空闲',
+                'capturing': '捕获中',
+                'processing': '处理中',
+                'loop_closure': '回环优化',
+                'finished': '完成'
+            };
+            statusText.textContent = statusMap[data.status] || data.status;
+            
+            // 更新指示器
+            indicator.className = `status-indicator status-${data.status}`;
+            
+            // 更新计数
+            document.getElementById('frame-count').textContent = data.frame_count || 0;
+            document.getElementById('chunk-count').textContent = data.chunk_count || 0;
+        }
+        
+        // WebSocket 连接
+        function initSocket() {
+            socket = io();
+            
+            socket.on('connection_established', (data) => {
+                console.log('Connected to server');
+                showToast('已连接到服务器', 'success');
+            });
+            
+            socket.on('frame_captured', (data) => {
+                document.getElementById('frame-count').textContent = data.frame_count;
+            });
+            
+            socket.on('processing_started', (data) => {
+                showToast(`开始处理块 ${data.chunk_id}`, 'info');
+            });
+            
+            socket.on('chunk_ready', async (data) => {
+                console.log('Chunk ready:', data);
+                document.getElementById('chunk-count').textContent = data.chunk_id + 1;
+                await loadPointCloud(data.chunk_id);
+            });
+            
+            socket.on('loop_closure_started', (data) => {
+                showLoading('正在进行回环优化...');
+                showToast('开始回环优化', 'info');
+            });
+            
+            socket.on('loop_closure_finished', async (data) => {
+                hideLoading();
+                showToast('回环优化完成！', 'success');
+                await loadFinalPointCloud();
+            });
+            
+            socket.on('error', (data) => {
+                showToast(`错误: ${data.message}`, 'error');
+            });
+        }
+        
+        // 按钮事件
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            const host = document.getElementById('zmq-host').value;
+            const port = parseInt(document.getElementById('zmq-port').value);
+            
+            showLoading('正在启动...');
+            
+            try {
+                const response = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ zmq_host: host, zmq_port: port })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('start-btn').disabled = true;
+                    document.getElementById('stop-btn').disabled = false;
+                    hideLoading();
+                    showToast('已开始扫描', 'success');
+                    updateStatus({ status: 'capturing', frame_count: 0, chunk_count: 0 });
+                } else {
+                    throw new Error(data.error || 'Failed to start');
+                }
+            } catch (error) {
+                hideLoading();
+                showToast(`启动失败: ${error.message}`, 'error');
+            }
+        });
+        
+        document.getElementById('stop-btn').addEventListener('click', async () => {
+            showLoading('正在停止并开始回环优化...');
+            
+            try {
+                const response = await fetch('/api/stop', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('start-btn').disabled = false;
+                    document.getElementById('stop-btn').disabled = true;
+                    // 不立即隐藏loading，等待回环完成
+                } else {
+                    throw new Error(data.error || 'Failed to stop');
+                }
+            } catch (error) {
+                hideLoading();
+                showToast(`停止失败: ${error.message}`, 'error');
+            }
+        });
+        
+        // 初始化
+        window.addEventListener('load', () => {
+            initThreeJS();
+            initSocket();
+            
+            // 定期查询状态
+            setInterval(async () => {
+                try {
+                    const response = await fetch('/api/status');
+                    const data = await response.json();
+                    updateStatus(data);
+                } catch (error) {
+                    console.error('Failed to fetch status:', error);
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
+
