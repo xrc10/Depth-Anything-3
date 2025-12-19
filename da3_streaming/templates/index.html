@@ -62,13 +62,20 @@
         }
 
         input[type="text"],
-        input[type="number"] {
+        input[type="number"],
+        input[type="range"] {
             width: 100%;
             padding: 8px 12px;
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             font-size: 14px;
             transition: border-color 0.3s;
+        }
+        
+        input[type="range"] {
+            padding: 0;
+            height: 8px;
+            cursor: pointer;
         }
 
         input[type="text"]:focus,
@@ -250,6 +257,12 @@
                 <input type="number" id="zmq-port" value="5555">
             </div>
             
+            <div class="control-group">
+                <label>点云大小: <span id="point-size-value">0.005</span></label>
+                <input type="range" id="point-size-slider" min="0.001" max="0.05" step="0.001" value="0.005">
+            </div>
+            
+            <button id="reset-view-btn">重置视角</button>
             <button id="start-btn">开始扫描</button>
             <button id="stop-btn" disabled>停止并回环优化</button>
             
@@ -300,6 +313,7 @@
         let scene, camera, renderer, controls;
         let pointClouds = [];
         let socket;
+        let pointSize = 0.005;  // 默认点大小，改小一点
         
         function initThreeJS() {
             const container = document.getElementById('canvas-container');
@@ -383,7 +397,7 @@
                 geometry.setAttribute('color', new THREE.Float32BufferAttribute(pointCloud.colors, 3));
                 
                 const material = new THREE.PointsMaterial({
-                    size: 0.02,
+                    size: pointSize,
                     vertexColors: true,
                     sizeAttenuation: true
                 });
@@ -393,6 +407,11 @@
                 
                 scene.add(points);
                 pointClouds.push(points);
+
+                // 如果是第一个chunk，自动调整相机视角
+                if (chunkId === 0) {
+                    fitViewToPoints(points);
+                }
                 
                 updatePointCount();
                 hideLoading();
@@ -403,6 +422,71 @@
                 hideLoading();
                 showToast('加载点云失败', 'error');
             }
+        }
+        
+        // 自动调整相机视角以适应点云
+        function fitViewToPoints(points) {
+            if (!points.geometry) return;
+            
+            points.geometry.computeBoundingBox();
+            const box = points.geometry.boundingBox;
+            
+            // 计算包围盒中心
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+            
+            // 计算包围盒尺寸
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            
+            // 计算相机距离
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraDistance = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+            
+            // 增加一点边距
+            cameraDistance *= 1.5;
+            
+            // 确保相机距离不过小
+            cameraDistance = Math.max(cameraDistance, 2.0);
+            
+            // 设置相机位置：
+            // 假设点云主要沿Z轴延伸（深度方向），我们将相机放在中心点的后方
+            // 这里我们保持X和Y与中心一致，Z轴放在中心点的"后面"（较小值方向，或者根据原始位置决定）
+            
+            // 既然是深度相机，通常是从原点向+Z看。
+            // 我们希望相机在点的后面，看向点。
+            // 如果点在 Z > 0，相机应该在 Z < 0 或者 Z 较小处。
+            
+            // 简单策略：放在中心点的Z轴负方向处
+            // 但是为了正对点云，我们可能需要根据数据的分布来定。
+            // 默认情况下，第一帧相机在原点，看向+Z。
+            // 我们把相机放在 (0, 0, -cameraDistance) 可能太远或者角度不对 if center is far.
+            
+            // 更好的策略：
+            // 相机位置 = 中心点 - (观察方向 * 距离)
+            // 默认观察方向是 +Z (0,0,1)。所以 位置 = center - (0,0,1)*dist = (cx, cy, cz - dist)
+            // 这样相机就在点的"后面"，看向点。
+            
+            // 如果考虑到 OpenCV 坐标系 (+Y 下)，在 ThreeJS (+Y 上) 中直接显示会倒置。
+            // 如果用户没有反馈倒置问题，我们假设坐标系已经处理或用户接受。
+            // 我们只调整位置。
+            
+            // 为了"正对"，我们把相机放在 (cx, cy, cz - cameraDistance)
+            // 并且看向 (cx, cy, cz)
+            
+            const newPos = new THREE.Vector3(center.x, center.y, center.z - cameraDistance);
+            
+            // 动画过渡相机
+            // 这里直接设置，也可以用 TWEEN
+            camera.position.copy(newPos);
+            camera.lookAt(center);
+            
+            // 更新控制器目标
+            controls.target.copy(center);
+            controls.update();
+            
+            console.log("Auto-fitted camera to:", newPos, "Target:", center);
         }
         
         // 加载最终点云（回环后）
@@ -427,7 +511,7 @@
                 geometry.setAttribute('color', new THREE.Float32BufferAttribute(pointCloud.colors, 3));
                 
                 const material = new THREE.PointsMaterial({
-                    size: 0.02,
+                    size: pointSize,
                     vertexColors: true,
                     sizeAttenuation: true
                 });
@@ -608,6 +692,37 @@
         }
         
         // 按钮事件
+        document.getElementById('reset-view-btn').addEventListener('click', () => {
+            // 合并所有点云的包围盒
+            if (pointClouds.length === 0) return;
+            
+            // 创建一个临时的Geometry包含所有点
+            // 或者直接遍历所有点的BoundingBox
+            
+            let combinedBox = new THREE.Box3();
+            let hasPoints = false;
+            
+            pointClouds.forEach(pc => {
+                if (pc.geometry) {
+                    pc.geometry.computeBoundingBox();
+                    if (pc.geometry.boundingBox) {
+                        combinedBox.union(pc.geometry.boundingBox);
+                        hasPoints = true;
+                    }
+                }
+            });
+            
+            if (hasPoints) {
+                // 使用虚拟的对象来复用 fitViewToPoints 逻辑
+                const dummyGeometry = new THREE.BufferGeometry();
+                dummyGeometry.boundingBox = combinedBox;
+                const dummyPoints = { geometry: dummyGeometry };
+                
+                fitViewToPoints(dummyPoints);
+                showToast('视角已重置', 'success');
+            }
+        });
+
         document.getElementById('start-btn').addEventListener('click', async () => {
             const host = document.getElementById('zmq-host').value;
             const port = parseInt(document.getElementById('zmq-port').value);
@@ -659,6 +774,24 @@
                 hideLoading();
                 showToast(`停止失败: ${error.message}`, 'error');
             }
+        });
+        
+        // 更新所有点云的大小
+        function updatePointSize(newSize) {
+            pointSize = newSize;
+            pointClouds.forEach(pc => {
+                if (pc.material) {
+                    pc.material.size = newSize;
+                    pc.material.needsUpdate = true;
+                }
+            });
+        }
+        
+        // 点大小滑块事件
+        document.getElementById('point-size-slider').addEventListener('input', (e) => {
+            const newSize = parseFloat(e.target.value);
+            document.getElementById('point-size-value').textContent = newSize.toFixed(3);
+            updatePointSize(newSize);
         });
         
         // 初始化
