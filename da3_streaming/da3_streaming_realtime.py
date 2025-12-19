@@ -141,8 +141,12 @@ class DA3_Streaming_Realtime:
         frames = sorted(glob.glob(os.path.join(self.frame_dir, "*.jpg")))
         return frames
     
-    def process_next_chunk(self):
-        """处理下一个chunk（增量处理）"""
+    def process_next_chunk(self, force_process=False):
+        """处理下一个chunk（增量处理）
+        
+        Args:
+            force_process: 是否强制处理剩余帧（即使不够一个完整的chunk）
+        """
         frames = self.get_available_frames()
         
         # 计算当前chunk的范围
@@ -159,12 +163,26 @@ class DA3_Streaming_Realtime:
             end_idx = min(start_idx + self.chunk_size, len(frames))
             
             # 后续chunk: 需要足够的帧来形成完整的chunk
-            if end_idx - start_idx < self.chunk_size:
+            # 但如果force_process=True，则处理所有剩余帧
+            if not force_process and end_idx - start_idx < self.chunk_size:
                 print(f"Waiting for more frames... (have {len(frames)}, need {start_idx + self.chunk_size})")
+                return None
+            
+            # 如果force_process=True但没有剩余帧，返回None
+            if force_process and end_idx <= start_idx:
+                print(f"No remaining frames to process (start={start_idx}, end={end_idx})")
                 return None
         
         chunk_frames = frames[start_idx:end_idx]
-        print(f"Processing chunk {self.chunk_count}: frames [{start_idx}:{end_idx}] ({len(chunk_frames)} frames)")
+        
+        if len(chunk_frames) == 0:
+            print(f"No frames to process in range [{start_idx}:{end_idx}]")
+            return None
+        
+        if force_process and len(chunk_frames) < self.chunk_size:
+            print(f"Processing final partial chunk {self.chunk_count}: frames [{start_idx}:{end_idx}] ({len(chunk_frames)} frames)")
+        else:
+            print(f"Processing chunk {self.chunk_count}: frames [{start_idx}:{end_idx}] ({len(chunk_frames)} frames)")
         
         # 记录chunk范围
         self.chunk_indices.append((start_idx, end_idx))
@@ -224,19 +242,26 @@ class DA3_Streaming_Realtime:
             curr_predictions.depth, curr_predictions.intrinsics, curr_predictions.extrinsics
         )
         
-        point_map1 = point_map1[-self.overlap:]
-        point_map2 = point_map2[:self.overlap]
-        conf1 = prev_predictions.conf[-self.overlap:]
-        conf2 = curr_predictions.conf[:self.overlap]
+        # 计算实际的重叠区域大小（处理部分chunk的情况）
+        curr_chunk_size = len(curr_predictions.depth)
+        actual_overlap = min(self.overlap, curr_chunk_size)
+        
+        point_map1 = point_map1[-actual_overlap:]
+        point_map2 = point_map2[:actual_overlap]
+        conf1 = prev_predictions.conf[-actual_overlap:]
+        conf2 = curr_predictions.conf[:actual_overlap]
+        
+        if actual_overlap < self.overlap:
+            print(f"Warning: Using reduced overlap of {actual_overlap} frames (normal: {self.overlap})")
         
         conf_threshold = min(np.median(conf1), np.median(conf2)) * 0.1
         
         scale_factor = None
         if self.config["Model"]["align_method"] == "scale+se3":
-            chunk1_depth = np.squeeze(prev_predictions.depth[-self.overlap:])
-            chunk2_depth = np.squeeze(curr_predictions.depth[:self.overlap])
-            chunk1_depth_conf = np.squeeze(prev_predictions.conf[-self.overlap:])
-            chunk2_depth_conf = np.squeeze(curr_predictions.conf[:self.overlap])
+            chunk1_depth = np.squeeze(prev_predictions.depth[-actual_overlap:])
+            chunk2_depth = np.squeeze(curr_predictions.depth[:actual_overlap])
+            chunk1_depth_conf = np.squeeze(prev_predictions.conf[-actual_overlap:])
+            chunk2_depth_conf = np.squeeze(curr_predictions.conf[:actual_overlap])
             
             scale_factor_return, quality_score, method_used = precompute_scale_chunks_with_depth(
                 chunk1_depth,
@@ -307,35 +332,58 @@ class DA3_Streaming_Realtime:
     
     def finalize_with_loop_closure(self):
         """完成处理并执行回环优化"""
+        print("=" * 60)
         print("Finalizing with loop closure...")
+        print("=" * 60)
         
         if not self.config["Model"]["loop_enable"]:
             print("Loop closure disabled, skipping...")
             self.merge_all_pointclouds()
             return
         
-        # 执行回环检测
-        loop_info_save_path = os.path.join(self.output_dir, "loop_closures.txt")
-        loop_detector = LoopDetector(
-            image_dir=self.frame_dir,
-            output=loop_info_save_path,
-            config=self.config
-        )
-        loop_detector.load_model()
-        loop_detector.run()
-        loop_list = loop_detector.get_loop_list()
-        
-        if len(loop_list) == 0:
-            print("No loops detected.")
+        try:
+            # 执行回环检测
+            print("\n[1/3] Starting loop detection...")
+            loop_info_save_path = os.path.join(self.output_dir, "loop_closures.txt")
+            loop_detector = LoopDetector(
+                image_dir=self.frame_dir,
+                output=loop_info_save_path,
+                config=self.config
+            )
+            
+            print("[1/3] Loading loop detection model...")
+            loop_detector.load_model()
+            
+            print("[1/3] Running loop detection...")
+            loop_detector.run()
+            loop_list = loop_detector.get_loop_list()
+            
+            print(f"[1/3] Loop detection completed. Found {len(loop_list)} loop pairs.")
+            
+            if len(loop_list) == 0:
+                print("No loops detected, skipping loop optimization.")
+                self.merge_all_pointclouds()
+                return
+            
+            # 处理回环
+            print(f"\n[2/3] Starting loop optimization with {len(loop_list)} loop pairs...")
+            # TODO: 实现完整的回环优化逻辑（类似da3_streaming.py中的实现）
+            # 这里简化处理，直接合并点云
+            print("[2/3] Loop optimization skipped (not yet implemented)")
+            
+            print("\n[3/3] Merging all pointclouds...")
             self.merge_all_pointclouds()
-            return
-        
-        # 处理回环
-        # TODO: 实现完整的回环优化逻辑（类似da3_streaming.py中的实现）
-        # 这里简化处理，直接合并点云
-        
-        print("Loop closure optimization completed.")
-        self.merge_all_pointclouds()
+            
+            print("=" * 60)
+            print("Loop closure optimization completed.")
+            print("=" * 60)
+            
+        except Exception as e:
+            print(f"ERROR in loop closure: {e}")
+            import traceback
+            traceback.print_exc()
+            print("\nFalling back to simple merge without loop closure...")
+            self.merge_all_pointclouds()
     
     def merge_all_pointclouds(self):
         """合并所有点云"""

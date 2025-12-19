@@ -118,6 +118,16 @@
             box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
         }
 
+        #reset-btn {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+            color: white;
+        }
+
+        #reset-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+        }
+
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -160,6 +170,7 @@
         .status-idle { background-color: #9e9e9e; }
         .status-capturing { background-color: #4caf50; }
         .status-processing { background-color: #ff9800; }
+        .status-finalizing { background-color: #ff9800; }
         .status-loop_closure { background-color: #2196f3; }
         .status-finished { background-color: #9c27b0; }
 
@@ -179,6 +190,44 @@
             color: #666;
             max-width: 300px;
             z-index: 1000;
+        }
+
+        #video-preview {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            display: none;
+        }
+
+        #video-preview.active {
+            display: block;
+        }
+
+        #video-preview canvas {
+            display: block;
+            border-radius: 5px;
+            max-width: 320px;
+            max-height: 240px;
+        }
+
+        #video-preview .video-label {
+            color: white;
+            font-size: 12px;
+            margin-top: 8px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        #video-preview .video-fps {
+            color: #4caf50;
+            font-size: 11px;
+            text-align: center;
+            margin-top: 4px;
         }
 
         #loading {
@@ -265,6 +314,7 @@
             <button id="reset-view-btn">重置视角</button>
             <button id="start-btn">开始扫描</button>
             <button id="stop-btn" disabled>停止并回环优化</button>
+            <button id="reset-btn">清空所有</button>
             
             <div id="status">
                 <div class="status-item">
@@ -283,6 +333,10 @@
                     <span class="status-value" id="chunk-count">0</span>
                 </div>
                 <div class="status-item">
+                    <span class="status-label">剩余待处理:</span>
+                    <span class="status-value" id="remaining-chunks">0</span>
+                </div>
+                <div class="status-item">
                     <span class="status-label">点云数量:</span>
                     <span class="status-value" id="point-count">0</span>
                 </div>
@@ -296,6 +350,12 @@
             • 鼠标滚轮: 缩放视图<br>
             • 点云将实时增量渲染<br>
             • 回环优化后将显示最终结果
+        </div>
+
+        <div id="video-preview">
+            <canvas id="video-canvas"></canvas>
+            <div class="video-label">📹 实时视频流</div>
+            <div class="video-fps" id="video-fps">0 FPS</div>
         </div>
         
         <div id="loading">
@@ -314,6 +374,43 @@
         let pointClouds = [];
         let socket;
         let pointSize = 0.005;  // 默认点大小，改小一点
+        
+        // 视频预览相关
+        let videoCanvas, videoCtx;
+        let lastVideoFrameTime = 0;
+        let videoFrameCount = 0;
+        let videoFPS = 0;
+        
+        function initVideoPreview() {
+            videoCanvas = document.getElementById('video-canvas');
+            videoCtx = videoCanvas.getContext('2d');
+            
+            // 设置FPS计算
+            setInterval(() => {
+                videoFPS = videoFrameCount;
+                videoFrameCount = 0;
+                document.getElementById('video-fps').textContent = `${videoFPS} FPS`;
+            }, 1000);
+        }
+        
+        function displayVideoFrame(base64Image) {
+            const img = new Image();
+            img.onload = function() {
+                // 设置canvas大小与图像一致
+                videoCanvas.width = img.width;
+                videoCanvas.height = img.height;
+                
+                // 绘制图像
+                videoCtx.drawImage(img, 0, 0);
+                
+                // 更新FPS计数
+                videoFrameCount++;
+                
+                // 显示视频预览窗口
+                document.getElementById('video-preview').classList.add('active');
+            };
+            img.src = 'data:image/jpeg;base64,' + base64Image;
+        }
         
         function initThreeJS() {
             const container = document.getElementById('canvas-container');
@@ -405,6 +502,9 @@
                 const points = new THREE.Points(geometry, material);
                 points.userData.chunkId = chunkId;
                 
+                // 修正坐标系：绕 X 轴旋转 180 度，解决上下颠倒问题
+                points.rotation.x = Math.PI;
+                
                 scene.add(points);
                 pointClouds.push(points);
 
@@ -428,12 +528,19 @@
         function fitViewToPoints(points) {
             if (!points.geometry) return;
             
-            points.geometry.computeBoundingBox();
+            // 确保边界框已计算
+            if (!points.geometry.boundingBox) {
+                points.geometry.computeBoundingBox();
+            }
             const box = points.geometry.boundingBox;
             
-            // 计算包围盒中心
+            // 计算局部中心
             const center = new THREE.Vector3();
             box.getCenter(center);
+            
+            // 转换为世界坐标系中心 (应用对象的变换，如旋转)
+            points.updateMatrixWorld(true);
+            center.applyMatrix4(points.matrixWorld);
             
             // 计算包围盒尺寸
             const size = new THREE.Vector3();
@@ -451,31 +558,8 @@
             cameraDistance = Math.max(cameraDistance, 2.0);
             
             // 设置相机位置：
-            // 假设点云主要沿Z轴延伸（深度方向），我们将相机放在中心点的后方
-            // 这里我们保持X和Y与中心一致，Z轴放在中心点的"后面"（较小值方向，或者根据原始位置决定）
-            
-            // 既然是深度相机，通常是从原点向+Z看。
-            // 我们希望相机在点的后面，看向点。
-            // 如果点在 Z > 0，相机应该在 Z < 0 或者 Z 较小处。
-            
-            // 简单策略：放在中心点的Z轴负方向处
-            // 但是为了正对点云，我们可能需要根据数据的分布来定。
-            // 默认情况下，第一帧相机在原点，看向+Z。
-            // 我们把相机放在 (0, 0, -cameraDistance) 可能太远或者角度不对 if center is far.
-            
-            // 更好的策略：
-            // 相机位置 = 中心点 - (观察方向 * 距离)
-            // 默认观察方向是 +Z (0,0,1)。所以 位置 = center - (0,0,1)*dist = (cx, cy, cz - dist)
-            // 这样相机就在点的"后面"，看向点。
-            
-            // 如果考虑到 OpenCV 坐标系 (+Y 下)，在 ThreeJS (+Y 上) 中直接显示会倒置。
-            // 如果用户没有反馈倒置问题，我们假设坐标系已经处理或用户接受。
-            // 我们只调整位置。
-            
-            // 为了"正对"，我们把相机放在 (cx, cy, cz - cameraDistance)
-            // 并且看向 (cx, cy, cz)
-            
-            const newPos = new THREE.Vector3(center.x, center.y, center.z - cameraDistance);
+            // 点云被旋转了180度(Z变成了-Z)，为了从正面看，我们应该站在 Z 轴正方向，看向负方向
+            const newPos = new THREE.Vector3(center.x, center.y, center.z + cameraDistance);
             
             // 动画过渡相机
             // 这里直接设置，也可以用 TWEEN
@@ -518,6 +602,9 @@
                 
                 const points = new THREE.Points(geometry, material);
                 points.userData.isFinal = true;
+                
+                // 修正坐标系
+                points.rotation.x = Math.PI;
                 
                 scene.add(points);
                 pointClouds.push(points);
@@ -639,6 +726,7 @@
                 'idle': '空闲',
                 'capturing': '捕获中',
                 'processing': '处理中',
+                'finalizing': '完成中',
                 'loop_closure': '回环优化',
                 'finished': '完成'
             };
@@ -650,6 +738,7 @@
             // 更新计数
             document.getElementById('frame-count').textContent = data.frame_count || 0;
             document.getElementById('chunk-count').textContent = data.chunk_count || 0;
+            document.getElementById('remaining-chunks').textContent = data.remaining_chunks || 0;
         }
         
         // WebSocket 连接
@@ -665,8 +754,22 @@
                 document.getElementById('frame-count').textContent = data.frame_count;
             });
             
+            socket.on('video_frame', (data) => {
+                displayVideoFrame(data.frame);
+            });
+            
             socket.on('processing_started', (data) => {
-                showToast(`开始处理块 ${data.chunk_id}`, 'info');
+                const remaining = data.remaining_chunks || 0;
+                showToast(`开始处理块 ${data.chunk_id} (剩余: ${remaining})`, 'info');
+                if (data.remaining_chunks !== undefined) {
+                    document.getElementById('remaining-chunks').textContent = data.remaining_chunks;
+                }
+            });
+            
+            socket.on('processing_remaining', (data) => {
+                const remaining = data.remaining_chunks || 0;
+                showToast(`正在处理剩余的 ${remaining} 个块...`, 'info');
+                document.getElementById('remaining-chunks').textContent = remaining;
             });
             
             socket.on('chunk_ready', async (data) => {
@@ -688,6 +791,18 @@
             
             socket.on('error', (data) => {
                 showToast(`错误: ${data.message}`, 'error');
+            });
+            
+            socket.on('reset_completed', (data) => {
+                console.log('Reset completed:', data.message);
+            });
+            
+            socket.on('clear_pointclouds', (data) => {
+                console.log('Clearing old point clouds:', data.message);
+                // 清空场景中的所有点云
+                pointClouds.forEach(pc => scene.remove(pc));
+                pointClouds = [];
+                updatePointCount();
             });
         }
         
@@ -766,6 +881,8 @@
                 if (response.ok) {
                     document.getElementById('start-btn').disabled = false;
                     document.getElementById('stop-btn').disabled = true;
+                    // 隐藏视频预览
+                    document.getElementById('video-preview').classList.remove('active');
                     // 不立即隐藏loading，等待回环完成
                 } else {
                     throw new Error(data.error || 'Failed to stop');
@@ -773,6 +890,58 @@
             } catch (error) {
                 hideLoading();
                 showToast(`停止失败: ${error.message}`, 'error');
+            }
+        });
+        
+        document.getElementById('reset-btn').addEventListener('click', async () => {
+            if (!confirm('确定要清空所有数据吗？这将清除所有点云和状态，为下一次扫描做准备。')) {
+                return;
+            }
+            
+            showLoading('正在清空所有数据...');
+            
+            try {
+                const response = await fetch('/api/reset', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // 清空场景中的所有点云
+                    pointClouds.forEach(pc => scene.remove(pc));
+                    pointClouds = [];
+                    
+                    // 重置UI状态
+                    document.getElementById('start-btn').disabled = false;
+                    document.getElementById('stop-btn').disabled = true;
+                    document.getElementById('video-preview').classList.remove('active');
+                    
+                    // 重置状态显示
+                    updateStatus({
+                        status: 'idle',
+                        frame_count: 0,
+                        chunk_count: 0,
+                        remaining_chunks: 0
+                    });
+                    
+                    // 更新点云数量
+                    updatePointCount();
+                    
+                    // 重置相机视角到默认位置
+                    camera.position.set(5, 5, 5);
+                    camera.lookAt(0, 0, 0);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                    
+                    hideLoading();
+                    showToast('已清空所有数据，可以开始新的扫描', 'success');
+                } else {
+                    throw new Error(data.error || 'Failed to reset');
+                }
+            } catch (error) {
+                hideLoading();
+                showToast(`清空失败: ${error.message}`, 'error');
             }
         });
         
@@ -797,6 +966,7 @@
         // 初始化
         window.addEventListener('load', () => {
             initThreeJS();
+            initVideoPreview();
             initSocket();
             
             // 定期查询状态
@@ -805,6 +975,11 @@
                     const response = await fetch('/api/status');
                     const data = await response.json();
                     updateStatus(data);
+                    
+                    // 如果不在捕获状态，隐藏视频预览
+                    if (data.status !== 'capturing' && data.status !== 'processing') {
+                        document.getElementById('video-preview').classList.remove('active');
+                    }
                 } catch (error) {
                     console.error('Failed to fetch status:', error);
                 }

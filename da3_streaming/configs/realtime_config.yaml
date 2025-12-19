@@ -4,20 +4,20 @@ Weights:
   SALAD: './weights/dino_salad.ckpt'
 
 Model:
-  chunk_size: 40  # 减小chunk_size以获得更快的响应
-  overlap: 10     # 减小overlap以提高效率
+  chunk_size: 120  # 减小chunk_size以获得更快的响应
+  overlap: 60     # 减小overlap以提高效率
   loop_chunk_size: 10
   loop_enable: True
   useDBoW: False
   delete_temp_files: False  # 保留临时文件便于调试
-  align_lib: 'torch'  # 使用torch以获得更好的兼容性
-  align_method: 'scale+se3'
+  align_lib: 'triton'  
+  align_method: 'se3'
   scale_compute_method: 'auto'
   align_type: 'dense'
 
   ref_view_strategy: 'saddle_balanced'
   ref_view_strategy_loop: 'saddle_balanced'
-  depth_threshold: 15.0
+  depth_threshold: 5
 
   save_depth_conf_result: False  # 实时模式不需要保存
   save_debug_info: False
@@ -33,7 +33,7 @@ Model:
 
   Pointcloud_Save:
     sample_ratio: 0.05  # 增加采样率以获得更密集的点云（适合小场景）
-    conf_threshold_coef: 0.6
+    conf_threshold_coef: 0.75
 
 Loop:
   SALAD:
@@ -45,7 +45,7 @@ Loop:
     nms_threshold: 25
 
   SIM3_Optimizer:
-    lang_version: 'python'  # 使用python版本以获得更好的兼容性
+    lang_version: 'cpp'
     max_iterations: 20
     lambda_init: 1e-6
 
